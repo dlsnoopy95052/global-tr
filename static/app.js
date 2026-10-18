@@ -180,7 +180,7 @@ function render(data, fit=false) {
   $('mode').className = demo ? 'demo-note' : '';
   $('source').textContent = data.source ? `Source · ${data.source.city || data.source.country} · ${data.source.ip}` : 'Source location unavailable';
   $('empty').hidden = data.routes.length > 0;
-  $('export').disabled = !data.routes.length;
+  $('export').disabled = $('export-pdf').disabled = !data.routes.length;
   const count = data.routes.reduce((sum, route) => sum + route.hops.filter(h => !h.unobserved).length, 0);
   $('map-caption').textContent = `${data.routes.length} routes · ${count} observed hop slots${demo?' · illustrative data':''}${data.routes.length&&!demo?` · updated ${localTime(new Date(Math.max(...data.routes.map(r=>Date.parse(r.timestamp)))).toISOString())}`:''}`;
   renderSummary(data);
@@ -296,6 +296,22 @@ $('export').addEventListener('click',()=>{
   const url=URL.createObjectURL(new Blob([JSON.stringify(latest,null,2)],{type:'application/json'}));
   const a=document.createElement('a');a.href=url;a.download=latest.demo?'route-atlas-SAMPLE.json':'route-atlas.json';a.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
+});
+function reportRoute(route, threshold) {
+  const final = route.hops.find(h => h.destination && !h.unobserved);
+  const rows = route.hops.map(h => `<tr><td>${h.unobserved?'—':h.ttl}</td><td>${escapeHtml(h.ip || h.responders.join(', ') || '* * * * *')}</td><td>${escapeHtml(hopOwner(h))}</td><td>${escapeHtml(h.geo?`${h.geo.city}, ${h.geo.country}`:h.responders.length>1?'Multiple responders':h.ip?'Unlocated / private':'No response')}</td><td>${h.rtt ?? '—'}${h.rtt!==null?' ms':''}</td><td class="${h.loss>=threshold?'loss':''}">${h.unobserved?'Unobserved':`${h.loss}% (${h.replies}/${h.probes})`}</td></tr>`).join('');
+  const when = route.started ? `Measured ${localTime(route.started)} → ${localTime(route.timestamp)}` : `Measured ${localTime(route.timestamp)}`;
+  return `<section class="report-route"><h3>${escapeHtml(route.target)} <small>${escapeHtml(route.ip)}</small></h3><p>${route.reached?`Reached · ${final?.rtt ?? '—'} ms · ${final?.loss ?? '—'}% probe loss`:'Destination unconfirmed'} · ${escapeHtml(when)}</p><table><thead><tr><th>HOP</th><th>RESPONDER</th><th>OWNER</th><th>LOCATION</th><th>RTT</th><th>PROBE LOSS</th></tr></thead><tbody>${rows}</tbody></table>${route.warning?`<p class="note">${escapeHtml(route.warning)}</p>`:''}</section>`;
+}
+// PDF export uses the browser's print engine (Save as PDF): no library or build step needed.
+$('export-pdf').addEventListener('click',()=>{
+  if(!latest)return;
+  const mode = latest.demo ? 'Sample data (not a measurement)' : latest.routes.some(r=>r.started) ? 'Live monitor (mtr / ping per hop)' : 'Traceroute';
+  $('report').innerHTML = `<h1>Route Atlas report</h1><p class="meta">${escapeHtml(mode)} · generated ${escapeHtml(localTime(new Date().toISOString()))}${latest.source?` · source ${escapeHtml(latest.source.city || latest.source.country || '')} ${escapeHtml(latest.source.ip)}`:''} · loss threshold ${latest.threshold}%</p><h2>Summary</h2>${$('summary').innerHTML}<h2>Routes</h2>${latest.routes.map(r=>reportRoute(r,latest.threshold)).join('')}${latest.errors.map(e=>`<p class="note">${escapeHtml(e.target)}: ${escapeHtml(e.message)}</p>`).join('')}<p class="note">Probe response rates are end-to-hop measurements, not individual cable loss.</p>`;
+  const title = document.title;
+  document.title = `route-atlas-${new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')}`; // default PDF file name
+  window.addEventListener('afterprint',()=>{document.title = title; $('report').innerHTML = '';},{once:true});
+  window.print();
 });
 $('demo').addEventListener('click',()=>{
   const geo=(ip,city,country,lat,lon,asn=64496)=>({ip,city,country,lat,lon,asn,org:'Illustrative network'});

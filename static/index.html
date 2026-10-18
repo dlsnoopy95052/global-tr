@@ -36,8 +36,9 @@
     </aside>
     <section class="workspace" aria-label="Network map and trace results">
       <div class="map-wrap"><div id="map" aria-label="Geographic network route map"></div><div class="map-top"><span id="mode">LIVE MEASUREMENTS</span><span id="source">Source · your public egress</span></div><div id="empty" class="map-empty"><span>◎</span><h2>Every connection has a journey.</h2><p>Add a destination to see yours.</p></div><div class="map-bottom"><span><i></i> <span id="map-caption">Waiting for your first trace</span></span><div class="map-controls"><label class="label-toggle"><input id="hide-hop-labels" type="checkbox"> Hide hop labels</label><button id="fit">Fit routes ⤢</button></div></div></div>
-      <div class="results"><div class="results-header"><div><div class="eyebrow">ROUTE INTELLIGENCE</div><h2>Observed paths</h2></div><button id="export" disabled>Export JSON ↓</button></div><div id="summary" hidden></div><div id="routes"><p class="placeholder">Hop-by-hop evidence will appear here. Select a route to inspect its path.</p></div></div>
+      <div class="results"><div class="results-header"><div><div class="eyebrow">ROUTE INTELLIGENCE</div><h2>Observed paths</h2></div><div class="export-actions"><button id="export-pdf" disabled>Export PDF ↓</button><button id="export" disabled>Export JSON ↓</button></div></div><div id="summary" hidden></div><div id="routes"><p class="placeholder">Hop-by-hop evidence will appear here. Select a route to inspect its path.</p></div></div>
     </section>
   </main>
+<div id="report" aria-hidden="true"></div>
 </body>
 </html>
