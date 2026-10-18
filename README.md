@@ -1,4 +1,4 @@
-# Route Atlas
+# global-tr
 
 A local network route map for macOS and Linux. Runs IPv4 traceroute (or mtr) from your machine, geolocates public hop addresses, and displays multiple destinations on an interactive dark map. Includes presentation view, hop tables, raw output, JSON export, and a clearly labeled demo.
 

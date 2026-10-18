@@ -573,7 +573,7 @@ if __name__ == '__main__':
         raise SystemExit('Local server ports are blocked here. Run python3 server.py directly in your terminal.')
     except OSError as error:
         raise SystemExit(f'Cannot open port {port}: {error}. Try PORT=8766 python3 server.py')
-    print(f'Route Atlas: http://localhost:{port}', flush=True)
+    print(f'global-tr: http://localhost:{port}', flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

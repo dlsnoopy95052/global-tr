@@ -318,7 +318,7 @@ function exportPdf() {
     headStyles:{fillColor:[240,240,240],textColor:[51,51,51],fontStyle:'bold'}, theme:'grid',
     didParseCell: d => {d.cell.text = d.cell.text.map(pdfText);}};
   const mode = latest.demo ? 'Sample data (not a measurement)' : latest.routes.some(r => r.started) ? 'Live monitor (mtr / ping per hop)' : 'Traceroute';
-  write('Route Atlas report', 20, true, [17,17,17], 2);
+  write('global-tr report', 20, true, [17,17,17], 2);
   write(`${mode} · generated ${localTime(new Date().toISOString())}${latest.source ? ` · source ${latest.source.city || latest.source.country || ''} ${latest.source.ip}` : ''} · loss threshold ${latest.threshold}%`, 9, false, [90,90,90], 10);
   write('Summary', 14, true);
   const box = $('summary');
