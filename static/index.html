@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>Route Atlas · Your network, mapped</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header><a class="brand" href="/" aria-label="Route Atlas home"><span class="logo">⌁</span> ROUTE ATLAS</a><span class="local"><i></i> LOCAL NETWORK OBSERVATORY</span><button id="present">Presentation view ↗</button></header>
+  <main>
+    <aside>
+      <div class="eyebrow">FOLLOW THE PACKETS</div>
+      <h1>Your network.<br>On the map.</h1>
+      <p class="intro">Trace the journey from your connection to anywhere on the internet.</p>
+      <form id="trace-form">
+        <label for="targets">DESTINATIONS <span>up to 5</span></label>
+        <textarea id="targets" rows="3" placeholder="1.1.1.1&#10;8.8.8.8&#10;example.com" required></textarea>
+        <div class="setting"><label for="probe-tool">Probe tool</label><div><select id="probe-tool"><option value="traceroute">traceroute</option><option value="mtr">mtr</option></select></div></div>
+        <div class="setting"><label for="threshold">High loss threshold</label><div><input id="threshold" type="number" min="1" max="100" value="20" required><span>%</span></div></div>
+        <button id="run" class="primary" type="submit">Trace my routes <span>→</span></button>
+      </form>
+      <div id="live" hidden><div class="live-row"><span>mtr running · time left</span><strong id="timer">5:00</strong></div><button id="stop" type="button">Stop measurement ■</button></div>
+      <div id="status" role="status" aria-live="polite">Ready to explore. Start a trace or load the demo.</div>
+      <button id="demo" class="subtle">Explore sample routes</button>
+      <div class="divider"></div>
+      <div class="eyebrow">READING THE MAP</div>
+      <div class="legend"><span class="sample healthy"></span><div>Healthy response<small>Receiving hop responds below threshold</small></div></div>
+      <div class="legend"><span class="sample loss"></span><div>High probe loss<small>Receiving hop meets the loss threshold</small></div></div>
+      <div class="legend"><span class="sample unknown"></span><div>Unconfirmed connection<small>Missing hops or inconclusive evidence</small></div></div>
+      <p class="footnote">IP locations are approximate. Probe loss is measured from your machine to a hop; it cannot prove loss on a specific physical link.</p>
+      <details><summary>How this works & privacy</summary><p>Runs IPv4 traceroute on this machine: 5 probes per hop, up to 24 hops. Public IPs and your egress IP are looked up using ipwho.is. Private addresses stay local. Map tiles load from OpenStreetMap without an API key; Leaflet loads from unpkg. Results stay in this server’s memory.</p><p>Your source marker is your public internet egress, which can be a VPN exit. Routers can ignore probes while forwarding traffic. Hops without locations use schematic map placeholders. Each adjacent pair is styled independently; unknown IPs produce dotted connections. All map links indicate observed route relationships, not physical cables.</p></details>
+    </aside>
+    <section class="workspace" aria-label="Network map and trace results">
+      <div class="map-wrap"><div id="map" aria-label="Geographic network route map"></div><div class="map-top"><span id="mode">LIVE MEASUREMENTS</span><span id="source">Source · your public egress</span></div><div id="empty" class="map-empty"><span>◎</span><h2>Every connection has a journey.</h2><p>Add a destination to see yours.</p></div><div class="map-bottom"><span><i></i> <span id="map-caption">Waiting for your first trace</span></span><div class="map-controls"><label class="label-toggle"><input id="hide-hop-labels" type="checkbox"> Hide hop labels</label><button id="fit">Fit routes ⤢</button></div></div></div>
+      <div class="results"><div class="results-header"><div><div class="eyebrow">ROUTE INTELLIGENCE</div><h2>Observed paths</h2></div><button id="export" disabled>Export JSON ↓</button></div><div id="summary" hidden></div><div id="routes"><p class="placeholder">Hop-by-hop evidence will appear here. Select a route to inspect its path.</p></div></div>
+    </section>
+  </main>
+</body>
+</html>
