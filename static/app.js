@@ -182,7 +182,7 @@ function render(data, fit=false) {
   $('empty').hidden = data.routes.length > 0;
   $('export').disabled = !data.routes.length;
   const count = data.routes.reduce((sum, route) => sum + route.hops.filter(h => !h.unobserved).length, 0);
-  $('map-caption').textContent = `${data.routes.length} routes · ${count} observed hop slots${demo?' · illustrative data':''}${data.routes.length&&!demo?` · updated ${new Date(Math.max(...data.routes.map(r=>Date.parse(r.timestamp)))).toLocaleTimeString()}`:''}`;
+  $('map-caption').textContent = `${data.routes.length} routes · ${count} observed hop slots${demo?' · illustrative data':''}${data.routes.length&&!demo?` · updated ${localTime(new Date(Math.max(...data.routes.map(r=>Date.parse(r.timestamp)))).toISOString())}`:''}`;
   renderSummary(data);
   // Live mtr re-renders every second; redraw the map only when the path or link colours change,
   // so open popups survive. Tables and summary always refresh.
