@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="/style.css">
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.31/jspdf.plugin.autotable.min.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -39,6 +41,5 @@
       <div class="results"><div class="results-header"><div><div class="eyebrow">ROUTE INTELLIGENCE</div><h2>Observed paths</h2></div><div class="export-actions"><button id="export-pdf" disabled>Export PDF ↓</button><button id="export" disabled>Export JSON ↓</button></div></div><div id="summary" hidden></div><div id="routes"><p class="placeholder">Hop-by-hop evidence will appear here. Select a route to inspect its path.</p></div></div>
     </section>
   </main>
-<div id="report" aria-hidden="true"></div>
 </body>
 </html>

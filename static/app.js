@@ -297,22 +297,64 @@ $('export').addEventListener('click',()=>{
   const a=document.createElement('a');a.href=url;a.download=latest.demo?'route-atlas-SAMPLE.json':'route-atlas.json';a.click();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 });
-function reportRoute(route, threshold) {
-  const final = route.hops.find(h => h.destination && !h.unobserved);
-  const rows = route.hops.map(h => `<tr><td>${h.unobserved?'—':h.ttl}</td><td>${escapeHtml(h.ip || h.responders.join(', ') || '* * * * *')}</td><td>${escapeHtml(hopOwner(h))}</td><td>${escapeHtml(h.geo?`${h.geo.city}, ${h.geo.country}`:h.responders.length>1?'Multiple responders':h.ip?'Unlocated / private':'No response')}</td><td>${h.rtt ?? '—'}${h.rtt!==null?' ms':''}</td><td class="${h.loss>=threshold?'loss':''}">${h.unobserved?'Unobserved':`${h.loss}% (${h.replies}/${h.probes})`}</td></tr>`).join('');
-  const when = route.started ? `Measured ${localTime(route.started)} → ${localTime(route.timestamp)}` : `Measured ${localTime(route.timestamp)}`;
-  return `<section class="report-route"><h3>${escapeHtml(route.target)} <small>${escapeHtml(route.ip)}</small></h3><p>${route.reached?`Reached · ${final?.rtt ?? '—'} ms · ${final?.loss ?? '—'}% probe loss`:'Destination unconfirmed'} · ${escapeHtml(when)}</p><table><thead><tr><th>HOP</th><th>RESPONDER</th><th>OWNER</th><th>LOCATION</th><th>RTT</th><th>PROBE LOSS</th></tr></thead><tbody>${rows}</tbody></table>${route.warning?`<p class="note">${escapeHtml(route.warning)}</p>`:''}</section>`;
+// PDF is generated in the browser with jsPDF (loaded from a CDN); its built-in fonts are Latin-1 only.
+const pdfText = value => String(value ?? '').replace(/[—–]/g,'-').replace(/→/g,'->').replace(/…/g,'...').replace(/[^\x20-\x7e\xa0-\xff]/g,'?');
+function exportPdf() {
+  if (!latest) return;
+  if (!window.jspdf?.jsPDF || !window.jspdf.jsPDF.API.autoTable) {status('PDF library could not load. Check your internet connection and reload.', true); return;}
+  const doc = new window.jspdf.jsPDF({unit:'pt', format:'a4'});
+  const margin = 40, width = doc.internal.pageSize.getWidth() - margin * 2, limit = doc.internal.pageSize.getHeight() - margin;
+  let y = margin;
+  const write = (text, size, bold=false, color=[17,17,17], gap=4) => {
+    doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(size); doc.setTextColor(...color);
+    doc.splitTextToSize(pdfText(text), width).forEach(line => {
+      if (y + size > limit) {doc.addPage(); y = margin;}
+      doc.text(line, margin, y + size); y += size * 1.3;
+    });
+    y += gap;
+  };
+  const tableStyle = {margin:{left:margin,right:margin}, styles:{fontSize:8,cellPadding:3,textColor:[17,17,17],lineColor:[210,210,210],lineWidth:.5,overflow:'linebreak'},
+    headStyles:{fillColor:[240,240,240],textColor:[51,51,51],fontStyle:'bold'}, theme:'grid',
+    didParseCell: d => {d.cell.text = d.cell.text.map(pdfText);}};
+  const mode = latest.demo ? 'Sample data (not a measurement)' : latest.routes.some(r => r.started) ? 'Live monitor (mtr / ping per hop)' : 'Traceroute';
+  write('Route Atlas report', 20, true, [17,17,17], 2);
+  write(`${mode} · generated ${localTime(new Date().toISOString())}${latest.source ? ` · source ${latest.source.city || latest.source.country || ''} ${latest.source.ip}` : ''} · loss threshold ${latest.threshold}%`, 9, false, [90,90,90], 10);
+  write('Summary', 14, true);
+  const box = $('summary');
+  write(box.querySelector('h3')?.textContent || '', 12, true, [17,17,17], 2);
+  box.querySelectorAll('li').forEach(li => write(`• ${li.textContent}`, 9, false, [51,51,51], 1));
+  y += 6;
+  const summaryTable = box.querySelector('table');
+  if (summaryTable) {
+    doc.autoTable({...tableStyle, html:summaryTable, startY:y});
+    y = doc.lastAutoTable.finalY + 16;
+  }
+  write('Routes', 14, true);
+  latest.routes.forEach(route => {
+    if (y + 90 > limit) {doc.addPage(); y = margin;}
+    const final = route.hops.find(h => h.destination && !h.unobserved);
+    const when = route.started ? `Measured ${localTime(route.started)} -> ${localTime(route.timestamp)}` : `Measured ${localTime(route.timestamp)}`;
+    write(`${route.target} (${route.ip})`, 11, true, [17,17,17], 1);
+    write(`${route.reached ? `Reached · ${final?.rtt ?? '-'} ms · ${final?.loss ?? '-'}% probe loss` : 'Destination unconfirmed'} · ${when}`, 8.5, false, [90,90,90], 4);
+    doc.autoTable({...tableStyle, startY:y,
+      head:[['HOP','RESPONDER','OWNER','LOCATION','RTT','PROBE LOSS']],
+      body:route.hops.map(h => [h.unobserved ? '-' : h.ttl, h.ip || h.responders.join(', ') || '* * * * *', hopOwner(h),
+        h.geo ? `${h.geo.city}, ${h.geo.country}` : h.responders.length > 1 ? 'Multiple responders' : h.ip ? 'Unlocated / private' : 'No response',
+        h.rtt !== null ? `${h.rtt} ms` : '-', h.unobserved ? 'Unobserved' : `${h.loss}% (${h.replies}/${h.probes})`]),
+      didParseCell: d => {
+        tableStyle.didParseCell(d);
+        const hop = route.hops[d.row.index];
+        if (d.section === 'body' && d.column.index === 5 && hop && hop.loss >= latest.threshold) {d.cell.styles.textColor = [200,0,0]; d.cell.styles.fontStyle = 'bold';}
+      }});
+    y = doc.lastAutoTable.finalY + 6;
+    if (route.warning) write(route.warning, 8, false, [90,90,90], 2);
+    y += 10;
+  });
+  latest.errors.forEach(e => write(`${e.target}: ${e.message}`, 8.5, false, [200,0,0], 2));
+  write('Probe response rates are end-to-hop measurements, not individual cable loss.', 8, false, [90,90,90]);
+  doc.save(`route-atlas${latest.demo ? '-SAMPLE' : ''}-${new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')}.pdf`);
 }
-// PDF export uses the browser's print engine (Save as PDF): no library or build step needed.
-$('export-pdf').addEventListener('click',()=>{
-  if(!latest)return;
-  const mode = latest.demo ? 'Sample data (not a measurement)' : latest.routes.some(r=>r.started) ? 'Live monitor (mtr / ping per hop)' : 'Traceroute';
-  $('report').innerHTML = `<h1>Route Atlas report</h1><p class="meta">${escapeHtml(mode)} · generated ${escapeHtml(localTime(new Date().toISOString()))}${latest.source?` · source ${escapeHtml(latest.source.city || latest.source.country || '')} ${escapeHtml(latest.source.ip)}`:''} · loss threshold ${latest.threshold}%</p><h2>Summary</h2>${$('summary').innerHTML}<h2>Routes</h2>${latest.routes.map(r=>reportRoute(r,latest.threshold)).join('')}${latest.errors.map(e=>`<p class="note">${escapeHtml(e.target)}: ${escapeHtml(e.message)}</p>`).join('')}<p class="note">Probe response rates are end-to-hop measurements, not individual cable loss.</p>`;
-  const title = document.title;
-  document.title = `route-atlas-${new Date().toISOString().slice(0,16).replace(/[:T]/g,'-')}`; // default PDF file name
-  window.addEventListener('afterprint',()=>{document.title = title; $('report').innerHTML = '';},{once:true});
-  window.print();
-});
+$('export-pdf').addEventListener('click', exportPdf);
 $('demo').addEventListener('click',()=>{
   const geo=(ip,city,country,lat,lon,asn=64496)=>({ip,city,country,lat,lon,asn,org:'Illustrative network'});
   const source=geo('192.0.2.10','San Francisco','United States',37.77,-122.42);
