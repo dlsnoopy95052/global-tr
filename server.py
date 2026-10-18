@@ -397,7 +397,8 @@ def collect_live(job_id, name, ip, threshold, ends_at, publish):
 
     try:
         # Stop is checked by waiting on its event, so Stop and the deadline react within a second.
-        while any(proc.poll() is None for proc in procs) and not stop.wait(1.0) and time.time() < ends_at:
+        # The job deadline is only set once the first result is published, so path discovery is not counted.
+        while any(proc.poll() is None for proc in procs) and not stop.wait(1.0) and time.time() < (ends_at() or float('inf')):
             published = snapshot() or published
     finally:
         stream.closed = True
@@ -424,12 +425,14 @@ def run_live(job_id, targets, threshold):
     def publish(route):
         with LOCK:
             slots[route['target']] = route
+            if job['ends_at'] is None:
+                job['ends_at'] = time.time() + MTR_DURATION  # start the countdown at the first result
             job['routes'] = [slots[name] for name, _ in targets if name in slots]
             job['rev'] += 1
 
     def worker(name, ip):
         try:
-            collect_live(job_id, name, ip, threshold, job['ends_at'], publish)
+            collect_live(job_id, name, ip, threshold, lambda: job['ends_at'], publish)
         except Exception as error:
             with LOCK:
                 job['errors'].append(dict(target=name, message=str(error)))
@@ -446,7 +449,7 @@ def stop_job(job_id):
         job = JOBS.get(job_id)
         if not job:
             return False
-        if job['state'] == 'running' and job['ends_at']:
+        if job['state'] == 'running' and job['duration']:
             job['stopped'] = True
             STOPS[job_id].set()
             for proc in list(PROCS.get(job_id, ())):
@@ -503,8 +506,10 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith('/api/jobs/'):
             with LOCK:
                 job = JOBS.get(path.rsplit('/', 1)[-1])
-                if job and job['ends_at']:
-                    job = dict(job, remaining=max(0, job['ends_at'] - time.time()))
+                if job and job['duration']:
+                    # Full duration until the first result starts the countdown.
+                    left = job['duration'] if job['ends_at'] is None else max(0, job['ends_at'] - time.time())
+                    job = dict(job, remaining=left)
                 return self.respond(200 if job else 404, job or {'error': 'Job not found.'})
         assets = {'/': ('index.html', 'text/html; charset=utf-8'),
                   '/app.js': ('app.js', 'text/javascript'),
@@ -555,7 +560,7 @@ class Handler(BaseHTTPRequestHandler):
             JOBS[job_id] = dict(state='running', source=None, routes=[], errors=[],
                                 current=None, threshold=threshold, total=len(targets), mode=mode,
                                 rev=0, stopped=False, duration=MTR_DURATION if live else None,
-                                ends_at=time.time() + MTR_DURATION if live else None)
+                                ends_at=None)  # live jobs get a deadline when the first result arrives
         threading.Thread(target=run_job, args=(job_id, targets, threshold, mode), daemon=True).start()
         self.respond(202, {'id': job_id})
 

@@ -136,7 +136,7 @@ HOST: laptop                      Loss%   Snt   Last   Avg  Best  Wrst StDev
         stopped = threading.Event()
         location = dict(lat=1, lon=2, city='Test', country='Test')
         server.JOBS['t'] = dict(state='running', routes=[], errors=[], rev=0, stopped=False,
-                                ends_at=time.time() + 300)
+                                duration=300, ends_at=time.time() + 300)
         server.STOPS['t'] = threading.Event()
         published = []
 
@@ -144,9 +144,10 @@ HOST: laptop                      Loss%   Snt   Last   Avg  Best  Wrst StDev
             published.append(route)
             server.stop_job('t')  # user presses Stop after the first update
 
-        with patch('server.subprocess.Popen', return_value=FakeProc()) as popen, \
+        with patch('server.IS_WINDOWS', False), \
+                patch('server.subprocess.Popen', return_value=FakeProc()) as popen, \
                 patch('server.geolocate', return_value=location):
-            server.collect_live('t', 'example.com', '8.8.8.8', 20, server.JOBS['t']['ends_at'], publish)
+            server.collect_live('t', 'example.com', '8.8.8.8', 20, lambda: server.JOBS['t']['ends_at'], publish)
         command = popen.call_args[0][0]
         self.assertIn('--raw', command)
         self.assertNotIn('-r', command)
@@ -162,12 +163,12 @@ HOST: laptop                      Loss%   Snt   Last   Avg  Best  Wrst StDev
             def terminate(self): pass
             def wait(self): pass
         server.JOBS['u'] = dict(state='running', routes=[], errors=[], rev=0, stopped=False,
-                                ends_at=time.time() + 300)
+                                duration=300, ends_at=time.time() + 300)
         server.STOPS['u'] = threading.Event()
         server.STOPS['u'].set()
-        with patch('server.subprocess.Popen', return_value=FakeProc()):
+        with patch('server.IS_WINDOWS', False), patch('server.subprocess.Popen', return_value=FakeProc()):
             with self.assertRaises(RuntimeError):
-                server.collect_live('u', 'example.com', '8.8.8.8', 20, server.JOBS['u']['ends_at'], print)
+                server.collect_live('u', 'example.com', '8.8.8.8', 20, lambda: server.JOBS['u']['ends_at'], print)
 
     WINDOWS_TRACERT = '''
 Tracing route to dns.google [8.8.8.8]

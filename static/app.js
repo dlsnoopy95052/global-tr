@@ -251,7 +251,7 @@ async function poll(id) {
       status(`${data.routes.length} route${data.routes.length===1?'':'s'} complete${data.stopped?' (stopped early; showing results so far)':''}${data.errors.length?`; ${data.errors.length} failed — see details below`:''}.`, !data.routes.length);
     } else if (data.remaining != null) {
       showTimer(data.remaining);
-      status(data.stopped ? 'Stopping…' : `Measuring ${data.total} destination${data.total===1?'':'s'} live. Hop tables update every second; press Stop to finish early.`);
+      status(data.stopped ? 'Stopping…' : !data.routes.length ? 'Discovering the path… the 5-minute timer starts when the first results arrive.' : `Measuring ${data.total} destination${data.total===1?'':'s'} live. Hop tables update every second; press Stop to finish early.`);
       pollTimer=setTimeout(()=>poll(id),1000);
     } else {
       status(`Tracing ${data.current || 'your public egress'}… ${data.routes.length + data.errors.length}/${data.total} complete. Each destination may take up to 150 seconds.`);
