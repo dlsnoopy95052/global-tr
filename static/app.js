@@ -298,7 +298,7 @@ $('export').addEventListener('click',()=>{
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 });
 // PDF is generated in the browser with jsPDF (loaded from a CDN); its built-in fonts are Latin-1 only.
-const pdfText = value => String(value ?? '').replace(/[—–]/g,'-').replace(/→/g,'->').replace(/…/g,'...').replace(/[^\x20-\x7e\xa0-\xff]/g,'?');
+const pdfText = value => String(value ?? '').replace(/[—–]/g,'-').replace(/→/g,'->').replace(/…/g,'...').replace(/≥/g,'>=').replace(/≤/g,'<=').replace(/[•●]/g,'-').replace(/[^\x20-\x7e\xa0-\xff]/g,'?');
 function exportPdf() {
   if (!latest) return;
   if (!window.jspdf?.jsPDF || !window.jspdf.jsPDF.API.autoTable) {status('PDF library could not load. Check your internet connection and reload.', true); return;}
@@ -322,7 +322,7 @@ function exportPdf() {
   write('Summary', 14, true);
   const box = $('summary');
   write(box.querySelector('h3')?.textContent || '', 12, true, [17,17,17], 2);
-  box.querySelectorAll('li').forEach(li => write(`• ${li.textContent}`, 9, false, [51,51,51], 1));
+  box.querySelectorAll('li').forEach(li => write(`- ${li.textContent}`, 9, false, [51,51,51], 1));
   y += 6;
   const summaryTable = box.querySelector('table');
   if (summaryTable) {
