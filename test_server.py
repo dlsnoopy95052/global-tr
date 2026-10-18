@@ -146,7 +146,7 @@ HOST: laptop                      Loss%   Snt   Last   Avg  Best  Wrst StDev
 
         with patch('server.subprocess.Popen', return_value=FakeProc()) as popen, \
                 patch('server.geolocate', return_value=location):
-            server.collect_mtr_live('t', 'example.com', '8.8.8.8', 20, server.JOBS['t']['ends_at'], publish)
+            server.collect_live('t', 'example.com', '8.8.8.8', 20, server.JOBS['t']['ends_at'], publish)
         command = popen.call_args[0][0]
         self.assertIn('--raw', command)
         self.assertNotIn('-r', command)
@@ -167,7 +167,57 @@ HOST: laptop                      Loss%   Snt   Last   Avg  Best  Wrst StDev
         server.STOPS['u'].set()
         with patch('server.subprocess.Popen', return_value=FakeProc()):
             with self.assertRaises(RuntimeError):
-                server.collect_mtr_live('u', 'example.com', '8.8.8.8', 20, server.JOBS['u']['ends_at'], print)
+                server.collect_live('u', 'example.com', '8.8.8.8', 20, server.JOBS['u']['ends_at'], print)
+
+    WINDOWS_TRACERT = '''
+Tracing route to dns.google [8.8.8.8]
+over a maximum of 24 hops:
+
+  1    <1 ms    <1 ms    <1 ms  192.168.1.1
+  2     *        *        *     Request timed out.
+  3    10 ms     9 ms    11 ms  10.20.30.40
+  4    12 ms     *       13 ms  8.8.8.8
+
+Trace complete.'''
+
+    def test_parser_reads_windows_tracert(self):
+        hops = server.parse_trace(self.WINDOWS_TRACERT, 3)
+        self.assertEqual([h['ttl'] for h in hops], [1, 2, 3, 4])
+        self.assertEqual([h['loss'] for h in hops], [0, 100, 0, 33.3])
+        self.assertEqual(hops[0]['rtt'], 1.0)
+        self.assertIsNone(hops[1]['ip'])
+        self.assertEqual(hops[3]['ip'], '8.8.8.8')
+
+    def test_windows_commands(self):
+        with patch('server.IS_WINDOWS', True):
+            command = server.command_for('traceroute', '8.8.8.8')
+            self.assertEqual(server.trace_probes(), 3)
+        self.assertEqual(command[0].split('\\')[-1].split('/')[-1].lower().replace('.exe', ''), 'tracert')
+        self.assertIn('-d', command)
+        self.assertNotIn('-q', command)
+
+    def test_ping_line_parser_ignores_locale_and_failures(self):
+        self.assertEqual(server.parse_ping_line('Reply from 8.8.8.8: bytes=32 time=12ms TTL=117'), 12.0)
+        self.assertEqual(server.parse_ping_line('Reply from 8.8.8.8: bytes=32 time<1ms TTL=64'), 1.0)
+        self.assertEqual(server.parse_ping_line('Antwort von 8.8.8.8: Bytes=32 Zeit=7ms TTL=117'), 7.0)
+        self.assertIsNone(server.parse_ping_line('Request timed out.'))
+        self.assertIsNone(server.parse_ping_line('Reply from 10.0.0.1: Destination host unreachable.'))
+
+    def test_ping_stream_counts_each_hop_and_silent_hops(self):
+        stream = server.PingStream({1: '10.0.0.1', 2: None, 3: '8.8.8.8'})
+        server.read_ping(stream, 1, ['Pinging 10.0.0.1 with 32 bytes of data:', '',
+                                     'Reply from 10.0.0.1: bytes=32 time=2ms TTL=64',
+                                     'Request timed out.'])
+        server.read_ping(stream, 3, ['Pinging 8.8.8.8 with 32 bytes of data:',
+                                     'Reply from 8.8.8.8: bytes=32 time=10ms TTL=117'])
+        hops = stream.hops('8.8.8.8')
+        self.assertEqual([(h['ttl'], h['probes'], h['loss']) for h in hops],
+                         [(1, 2, 50.0), (2, 2, 100.0), (3, 1, 0.0)])
+        self.assertIsNone(hops[1]['ip'])
+        self.assertEqual(hops[2]['ip'], '8.8.8.8')
+        stream.closed = True
+        stream.record(1, None)  # ping's exit summary must not count as a probe
+        self.assertEqual(stream.hops('8.8.8.8')[0]['probes'], 2)
 
     def test_rejects_command_arguments_and_urls(self):
         for target in ['-I 1.1.1.1', 'https://example.com', 'example.com;id', '$(id)', '']:

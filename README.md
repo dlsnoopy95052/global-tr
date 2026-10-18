@@ -4,13 +4,20 @@ A local network route map for macOS and Linux. Runs IPv4 traceroute (or mtr) fro
 
 ## Run
 
-Requires Python 3.9+ and the `traceroute` command (included on macOS; on Debian/Ubuntu use `sudo apt install traceroute`). No Python packages to install.
+Requires Python 3.9+. No Python packages to install. Runs on macOS, Linux and Windows 10/11.
+
+- **macOS / Linux:** needs `traceroute` (included on macOS; on Debian/Ubuntu `sudo apt install traceroute`) and, for live mode, `mtr`.
+- **Windows:** nothing extra to install; it uses the built-in `tracert` and `ping`. Start with `py server.py` (or `python server.py`).
 
 ```sh
 python3 server.py
 ```
 
 Open **http://localhost:8765**. Enter up to five hostnames or IPv4 addresses, separated by newlines or commas. URLs and ports are not accepted. Choose **traceroute** or **mtr** under *Probe tool*. A traceroute destination can take up to 150 seconds; mtr mode runs for 5 minutes (see below). The app binds to loopback only. Set `PORT` to change the port.
+
+### Windows live mode
+
+Windows has no mtr, so *live monitor* finds the path once with `tracert`, then runs a continuous `ping -t` against each hop address (one probe per hop per second, same 5-minute timer and Stop button). Loss and RTT are therefore measured by pinging each router directly rather than by TTL-expiry replies, and the path is not re-discovered during the run. Routers that never answered `tracert` show as 100% loss. Windows output is parsed without relying on English text, so localized Windows should work.
 
 ### mtr mode
 
@@ -44,4 +51,4 @@ The server accepts requests only through localhost/127.0.0.1 Host headers and re
 python3 -m unittest -v
 ```
 
-Live traceroute requires network probe permission from the OS. If a sandbox blocks it, run the server directly in your terminal. Windows and IPv6 are not supported yet.
+Live traceroute requires network probe permission from the OS. If a sandbox blocks it, run the server directly in your terminal. IPv6 is not supported yet. The Windows code path has been tested only against sample `tracert`/`ping` output, not on a real Windows machine.

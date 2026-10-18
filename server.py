@@ -26,6 +26,7 @@ MTR_DURATION = 300  # seconds of continuous mtr measurement
 STOPS = {}          # job id -> threading.Event, set when the user stops a live mtr job
 PROCS = {}          # job id -> running mtr subprocesses, terminated on stop
 MODES = ('traceroute', 'mtr')
+IS_WINDOWS = os.name == 'nt'  # no mtr there: tracert + one `ping -t` per hop instead
 
 
 def resolve_target(value):
@@ -53,7 +54,7 @@ def parse_trace(output, probes=PROBES):
         hops.append(dict(ttl=ttl, ip=ips[0] if len(ips) == 1 else None,
                          responders=ips, loss=loss, replies=len(rtts), probes=probes,
                          rtt=round(sum(rtts) / len(rtts), 2) if rtts else None,
-                         unreachable='!' in body, geo=None))
+                         unreachable='!' in body or 'unreachable' in body.lower(), geo=None))
     return hops
 
 
@@ -148,14 +149,20 @@ def command_for(mode, ip, cycles=PROBES):
     if mode == 'mtr':
         binary = find_binary('mtr') or 'mtr'
         return [binary, '-n', '-r', '-w', '-c', str(cycles), '-m', '24', '-Z', '1', ip]
+    if IS_WINDOWS:
+        return [find_binary('tracert') or 'tracert', '-d', '-h', '24', '-w', '1000', ip]
     binary = find_binary('traceroute') or '/usr/sbin/traceroute'
     return [binary, '-n', '-m', '24', '-q', str(PROBES), '-w', '1', ip]
+
+
+def trace_probes():
+    return 3 if IS_WINDOWS else PROBES  # tracert always sends three probes per hop
 
 
 def collect(name, ip, threshold, mode='traceroute'):
     command = command_for(mode, ip)
     try:
-        proc = subprocess.run(command, capture_output=True, text=True, timeout=150)
+        proc = subprocess.run(command, capture_output=True, text=True, errors='replace', timeout=150)
     except FileNotFoundError:
         hint = ' (macOS: brew install mtr)' if mode == 'mtr' else ''
         raise RuntimeError(f'{mode} is missing. Install it with your OS package manager{hint}.')
@@ -163,7 +170,7 @@ def collect(name, ip, threshold, mode='traceroute'):
         raise RuntimeError(f'This environment blocks {mode}. Run python3 server.py in a local terminal.')
     except subprocess.TimeoutExpired:
         raise RuntimeError('Trace timed out after 150 seconds. Try a closer destination.')
-    hops = (parse_mtr if mode == 'mtr' else parse_trace)(proc.stdout)
+    hops = parse_mtr(proc.stdout) if mode == 'mtr' else parse_trace(proc.stdout, trace_probes())
     if not hops:
         raise no_hops_error(mode, proc.stdout, proc.stderr)
     return finish_route(name, ip, hops, threshold, mode, proc.stdout,
@@ -197,6 +204,14 @@ def finish_route(name, ip, hops, threshold, mode, raw, warning):
                 timestamp=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()))
 
 
+def build_hop(ttl, probes, replies, rtt_sum, responders):
+    return dict(ttl=ttl, ip=responders[0] if len(responders) == 1 else None,
+                responders=list(responders), loss=round(100 * max(0, probes - replies) / probes, 1),
+                replies=replies, probes=probes,
+                rtt=round(rtt_sum / replies, 2) if replies else None,
+                unreachable=False, geo=None)
+
+
 class MtrStream:
     """Accumulate `mtr --raw` events (x = probe sent, h = responder, p = reply) per TTL."""
     GRACE = 1.5  # seconds a probe may still be in flight before it counts as lost
@@ -204,6 +219,7 @@ class MtrStream:
     def __init__(self):
         self.lock = threading.Lock()
         self.sent, self.replies, self.rtt_sum, self.responders, self.pending = {}, {}, {}, {}, {}
+        self.closed = False
 
     def feed(self, line, now=None):
         parts = line.split()
@@ -237,19 +253,61 @@ class MtrStream:
             hops = []
             for ttl in sorted(self.sent):
                 probes = self.sent[ttl] - inflight.get(ttl, 0)
-                if probes <= 0:
-                    continue
-                replies, responders = self.replies.get(ttl, 0), list(self.responders.get(ttl, []))
-                hops.append(dict(ttl=ttl, ip=responders[0] if len(responders) == 1 else None,
-                                 responders=responders, loss=round(100 * max(0, probes - replies) / probes, 1),
-                                 replies=replies, probes=probes,
-                                 rtt=round(self.rtt_sum.get(ttl, 0.0) / replies, 2) if replies else None,
-                                 unreachable=False, geo=None))
+                if probes > 0:
+                    hops.append(build_hop(ttl, probes, self.replies.get(ttl, 0),
+                                          self.rtt_sum.get(ttl, 0.0), self.responders.get(ttl, [])))
         # Probes beyond the destination only time out; drop them once it has answered.
         for index, hop in enumerate(hops):
             if destination in hop['responders']:
                 return hops[:index + 1]
         return hops
+
+
+class PingStream:
+    """Windows stand-in for mtr: counters fed by one continuous `ping -t` per known hop address."""
+
+    def __init__(self, hop_ips):
+        self.lock = threading.Lock()
+        self.hop_ips = hop_ips  # ttl -> address to ping, or None for a hop that never answered tracert
+        self.sent, self.replies, self.rtt_sum = {}, {}, {}
+        self.closed = False
+
+    def record(self, ttl, rtt):
+        with self.lock:
+            if self.closed:  # ping prints a summary when it exits; it is not a probe
+                return
+            self.sent[ttl] = self.sent.get(ttl, 0) + 1
+            if rtt is not None:
+                self.replies[ttl] = self.replies.get(ttl, 0) + 1
+                self.rtt_sum[ttl] = self.rtt_sum.get(ttl, 0.0) + rtt
+
+    def hops(self, destination, now=None):
+        with self.lock:
+            rounds = max(self.sent.values(), default=0)
+            hops = []
+            for ttl, ip in sorted(self.hop_ips.items()):
+                probes = self.sent.get(ttl, 0) if ip else rounds
+                if probes > 0:
+                    hops.append(build_hop(ttl, probes, self.replies.get(ttl, 0),
+                                          self.rtt_sum.get(ttl, 0.0), [ip] if ip else []))
+        return hops
+
+
+def parse_ping_line(line):
+    """RTT in ms for a Windows `ping` reply line, else None. Matches 'time=12ms' / 'time<1ms' in any locale."""
+    match = re.search(r'[=<]\s*(\d+)\s*ms', line, re.I)
+    return float(match[1]) if match and re.search(r'TTL', line, re.I) else None
+
+
+def read_ping(stream, ttl, lines):
+    seen_header = False
+    for line in lines:
+        if not line.strip():
+            continue
+        if not seen_header:  # "Pinging x with 32 bytes of data:"
+            seen_header = True
+            continue
+        stream.record(ttl, parse_ping_line(line))
 
 
 def mtr_summary(hops):
@@ -260,24 +318,71 @@ def mtr_summary(hops):
     return '\n'.join(lines)
 
 
-def collect_mtr_live(job_id, name, ip, threshold, ends_at, publish):
-    """Stream one long-running mtr and publish merged per-hop results every second."""
-    stop = STOPS[job_id]
+def spawn(job_id, command, stop):
+    """Start a subprocess that Stop can terminate."""
+    try:
+        proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, errors='replace')
+    except FileNotFoundError:
+        raise RuntimeError(f'{command[0]} is missing. Install it with your OS package manager (macOS: brew install mtr).')
+    except PermissionError:
+        raise RuntimeError(f'This environment blocks {command[0]}. Run python3 server.py in a local terminal.')
+    with LOCK:
+        PROCS.setdefault(job_id, set()).add(proc)
+    if stop.is_set():
+        proc.terminate()
+    return proc
+
+
+def start_mtr(job_id, ip, stop):
     command = command_for('mtr', ip, MTR_DURATION)
     command.insert(command.index('-r'), '--raw')
     command.remove('-r')
     command.remove('-w')
-    try:
-        proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    except FileNotFoundError:
-        raise RuntimeError('mtr is missing. Install it with your OS package manager (macOS: brew install mtr).')
-    except PermissionError:
-        raise RuntimeError('This environment blocks mtr. Run python3 server.py in a local terminal.')
-    with LOCK:
-        PROCS.setdefault(job_id, set()).add(proc)
-    stream, started, published = MtrStream(), time.time(), False
+    proc = spawn(job_id, command, stop)
+    stream = MtrStream()
     reader = threading.Thread(target=lambda: [stream.feed(line) for line in proc.stdout], daemon=True)
     reader.start()
+    return [proc], stream, [reader]
+
+
+def start_ping_monitor(job_id, ip, stop):
+    """Windows: discover the path with tracert, then ping every hop address continuously."""
+    trace = spawn(job_id, command_for('traceroute', ip), stop)
+    try:
+        stdout, stderr = trace.communicate(timeout=150)
+    except subprocess.TimeoutExpired:
+        trace.kill()
+        raise RuntimeError('Path discovery timed out after 150 seconds. Try a closer destination.')
+    finally:
+        with LOCK:
+            PROCS.get(job_id, set()).discard(trace)
+    if stop.is_set():
+        return None
+    hops = parse_trace(stdout, trace_probes())
+    if not hops:
+        raise no_hops_error('tracert', stdout, stderr)
+    stream = PingStream({hop['ttl']: hop['responders'][0] if hop['responders'] else None for hop in hops})
+    procs, readers = [], []
+    for ttl, hop_ip in stream.hop_ips.items():
+        if hop_ip:
+            proc = spawn(job_id, ['ping', '-4', '-t', '-w', '1000', hop_ip], stop)
+            reader = threading.Thread(target=read_ping, args=(stream, ttl, proc.stdout), daemon=True)
+            reader.start()
+            procs.append(proc)
+            readers.append(reader)
+    return procs, stream, readers
+
+
+def collect_live(job_id, name, ip, threshold, ends_at, publish):
+    """Run a continuous measurement and publish merged per-hop results every second."""
+    stop = STOPS[job_id]
+    started, published = time.time(), False
+    label = 'ping monitor' if IS_WINDOWS else 'mtr'
+    monitor = (start_ping_monitor if IS_WINDOWS else start_mtr)(job_id, ip, stop)
+    if monitor is None:
+        raise RuntimeError('Stopped before the first results arrived.')
+    procs, stream, readers = monitor
 
     def snapshot():
         hops = stream.hops(ip)
@@ -285,30 +390,34 @@ def collect_mtr_live(job_id, name, ip, threshold, ends_at, publish):
             return False
         elapsed = int(time.time() - started)
         route = finish_route(name, ip, hops, threshold, 'mtr', mtr_summary(hops),
-                             f'Live mtr: sampled for {elapsed} s, updated every second. Raw output is the current per-hop summary.')
+                             f'Live {label}: sampled for {elapsed} s, updated every second. Raw output is the current per-hop summary.')
         route['started'] = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(started))
         publish(route)
         return True
 
     try:
         # Stop is checked by waiting on its event, so Stop and the deadline react within a second.
-        while proc.poll() is None and not stop.wait(1.0) and time.time() < ends_at:
+        while any(proc.poll() is None for proc in procs) and not stop.wait(1.0) and time.time() < ends_at:
             published = snapshot() or published
     finally:
-        if proc.poll() is None:
-            proc.terminate()
-        proc.wait()
-        reader.join(timeout=2)
+        stream.closed = True
+        for proc in procs:
+            if proc.poll() is None:
+                proc.terminate()
+            proc.wait()
+        for reader in readers:
+            reader.join(timeout=2)
         with LOCK:
-            PROCS.get(job_id, set()).discard(proc)
+            for proc in procs:
+                PROCS.get(job_id, set()).discard(proc)
     published = snapshot() or published
     if not published:
         if stop.is_set():
-            raise RuntimeError('Stopped before the first mtr results arrived.')
-        raise no_hops_error('mtr', '', proc.stderr.read())
+            raise RuntimeError('Stopped before the first results arrived.')
+        raise no_hops_error(label, '', procs[0].stderr.read() if procs else '')
 
 
-def run_mtr_live(job_id, targets, threshold):
+def run_live(job_id, targets, threshold):
     job = JOBS[job_id]
     slots = {}
 
@@ -320,7 +429,7 @@ def run_mtr_live(job_id, targets, threshold):
 
     def worker(name, ip):
         try:
-            collect_mtr_live(job_id, name, ip, threshold, job['ends_at'], publish)
+            collect_live(job_id, name, ip, threshold, job['ends_at'], publish)
         except Exception as error:
             with LOCK:
                 job['errors'].append(dict(target=name, message=str(error)))
@@ -353,7 +462,7 @@ def run_job(job_id, targets, threshold, mode='traceroute'):
     try:
         job['source'] = geolocate()
         if mode == 'mtr':
-            run_mtr_live(job_id, targets, threshold)
+            run_live(job_id, targets, threshold)
         else:
             for name, ip in targets:
                 job['current'] = name
@@ -390,7 +499,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(403, {'error': 'Local access only.'})
         path = self.path.split('?')[0]
         if path == '/api/session':
-            return self.respond(200, {'token': TOKEN})
+            return self.respond(200, {'token': TOKEN, 'windows': IS_WINDOWS})
         if path.startswith('/api/jobs/'):
             with LOCK:
                 job = JOBS.get(path.rsplit('/', 1)[-1])
@@ -459,7 +568,7 @@ if __name__ == '__main__':
         raise SystemExit('Local server ports are blocked here. Run python3 server.py directly in your terminal.')
     except OSError as error:
         raise SystemExit(f'Cannot open port {port}: {error}. Try PORT=8766 python3 server.py')
-    print(f'Route Atlas → http://localhost:{port}', flush=True)
+    print(f'Route Atlas: http://localhost:{port}', flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
